@@ -1,0 +1,6 @@
+# 工作区本地数据，不入仓库
+.workbuddy/
+output/
+
+# 原版工程对照副本（本地留作 diff 生成来源）
+OV_Watch(原版)/

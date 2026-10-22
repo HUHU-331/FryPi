@@ -19,9 +19,13 @@ void Key_Port_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
-  /*Configure GPIO pin : PA0 */
+  /*Configure GPIO pin : PA0
+    Both edges: the release must be observed in real time too. With a
+    falling-edge-only EXTI the release is only seen at the next 50 ms task
+    timeout, and a contact shorter than KEY_DEBOUNCE_MS would still be
+    misreported as a short press (sim: simulation/key_sim.py, scenario 4). */
   GPIO_InitStruct.Pin = KEY1_PIN;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(KEY1_PORT, &GPIO_InitStruct);
 
@@ -33,7 +37,7 @@ void Key_Port_Init(void)
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 }
 
-/* EXTI callback: keep it short, only wake the key task.
+/* EXTI callback (both edges): keep it short, only wake the key task.
    No debounce, no business logic, no blocking call in here. */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {

@@ -1,7 +1,7 @@
-diff --git a/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/BSP/KEY/key.c b/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/BSP/KEY/key.c
-index 73a7f02..dcc2d27 100644
---- a/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/BSP/KEY/key.c
-+++ b/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/BSP/KEY/key.c
+diff --git a/OV_Watch/BSP/KEY/key.c b/OV_Watch/BSP/KEY/key.c
+index 73a7f02..0cfbcb7 100644
+--- a/OV_Watch/BSP/KEY/key.c
++++ b/OV_Watch/BSP/KEY/key.c
 @@ -1,6 +1,16 @@
  #include "key.h"
  #include "delay.h"
@@ -19,7 +19,19 @@ index 73a7f02..dcc2d27 100644
  
  void Key_Port_Init(void)
  {
-@@ -15,30 +25,78 @@ void Key_Port_Init(void)
+@@ -9,36 +19,88 @@ void Key_Port_Init(void)
+   /* GPIO Ports Clock Enable */
+   __HAL_RCC_GPIOA_CLK_ENABLE();
+ 
+-  /*Configure GPIO pin : PA0 */
++  /*Configure GPIO pin : PA0
++    Both edges: the release must be observed in real time too. With a
++    falling-edge-only EXTI the release is only seen at the next 50 ms task
++    timeout, and a contact shorter than KEY_DEBOUNCE_MS would still be
++    misreported as a short press (sim: simulation/key_sim.py, scenario 4). */
+   GPIO_InitStruct.Pin = KEY1_PIN;
+-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
++  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
    GPIO_InitStruct.Pull = GPIO_PULLUP;
    HAL_GPIO_Init(KEY1_PORT, &GPIO_InitStruct);
  
@@ -33,7 +45,7 @@ index 73a7f02..dcc2d27 100644
    HAL_NVIC_EnableIRQ(EXTI0_IRQn);
  }
  
-+/* EXTI callback: keep it short, only wake the key task.
++/* EXTI callback (both edges): keep it short, only wake the key task.
 +   No debounce, no business logic, no blocking call in here. */
 +void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 +{
@@ -113,10 +125,10 @@ index 73a7f02..dcc2d27 100644
  	return keyvalue;
  }
 -
-diff --git a/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/User/Tasks/Src/user_KeyTask.c b/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/User/Tasks/Src/user_KeyTask.c
+diff --git a/OV_Watch/User/Tasks/Src/user_KeyTask.c b/OV_Watch/User/Tasks/Src/user_KeyTask.c
 index 92cc0d8..e9d1306 100644
---- a/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/User/Tasks/Src/user_KeyTask.c
-+++ b/2.software/2.Advanced/6.LVGL-SmartWatch/OV_Watch/User/Tasks/Src/user_KeyTask.c
+--- a/OV_Watch/User/Tasks/Src/user_KeyTask.c
++++ b/OV_Watch/User/Tasks/Src/user_KeyTask.c
 @@ -4,6 +4,8 @@
  #include "ui_HomePage.h"
  #include "main.h"
