@@ -14,6 +14,10 @@
 #endif
 
 static LCD_CallbackFunc_t lcd_ready_cb = NULL;
+
+/* 等待一帧 DMA 发完的上限；正常一帧在 10~20ms 量级，超时说明 SPI 卡死 */
+#define LCD_SPI_TIMEOUT_MS   20U
+
 /******************************************************************************
       函数说明：在指定区域填充颜色
       入口数据：xsta,ysta   起始坐标
@@ -35,23 +39,59 @@ void LCD_Fill(u16 xsta,u16 ysta,u16 xend,u16 yend,u16 color)
 }
 
 /******************************************************************************
+      函数说明：等待 SPI/DMA 空闲
+      入口数据：超时时间(ms)
+      返回值：HAL_OK 空闲可用；HAL_TIMEOUT 超时
+      说明：   上一帧 DMA 还在传时，HAL_SPI_Transmit / HAL_SPI_Transmit_DMA 都会
+                直接返回 HAL_BUSY，地址命令和整帧数据都会被静默丢弃（花屏/局部
+                不刷新）。所以发起新一帧之前必须先等上一次传输结束。
+******************************************************************************/
+static HAL_StatusTypeDef LCD_Wait_Idle(uint32_t timeout_ms)
+{
+	uint32_t start;
+
+	if (HAL_SPI_GetState(&hspi1) == HAL_SPI_STATE_READY)
+	{
+		return HAL_OK;                      /* 快路径：SPI 空闲，直接用 */
+	}
+
+	start = HAL_GetTick();
+	while (HAL_SPI_GetState(&hspi1) != HAL_SPI_STATE_READY)
+	{
+		if ((HAL_GetTick() - start) > timeout_ms)
+		{
+			return HAL_TIMEOUT;
+		}
+		osDelay(1);   /* 让出 CPU，DMA 在后台继续，中断里完成状态切换 */
+	}
+	return HAL_OK;
+}
+
+/******************************************************************************
       函数说明：在指定区域填充颜色
       入口数据：xsta,ysta   起始坐标
                 xend,yend   终止坐标
 								color       要填充的颜色
-      返回值：  无
+      返回值：HAL_OK 已发起 DMA 传输；其他值表示本帧没有发出去
 ******************************************************************************/
-void LCD_Color_Fill(u16 xsta,u16 ysta,u16 xend,u16 yend,u16 *color_p)
+HAL_StatusTypeDef LCD_Color_Fill(u16 xsta,u16 ysta,u16 xend,u16 yend,u16 *color_p)
 {
-	u16 i,j,width,height;
+	u16 width,height;
 	width = xend-xsta+1;
 	height = yend-ysta+1;
 	uint32_t pixel_count = width * height;
 	uint32_t byte_count = pixel_count * 2U;
 
+	if (LCD_Wait_Idle(LCD_SPI_TIMEOUT_MS) != HAL_OK)
+	{
+		return HAL_TIMEOUT;
+	}
+
 	LCD_Address_Set(xsta,ysta+OFFSET_Y,xend,yend+OFFSET_Y);
 
-	HAL_SPI_Transmit_DMA(&hspi1,(uint8_t*)color_p,byte_count);
+	/* 返回值交给调用方判断：发不出去时要立刻 ack LVGL，否则这块区域
+	   永远不会被标记为刷完，渲染会停在这里 */
+	return HAL_SPI_Transmit_DMA(&hspi1,(uint8_t*)color_p,byte_count);
 }
 
 // 设置通知的回调函数

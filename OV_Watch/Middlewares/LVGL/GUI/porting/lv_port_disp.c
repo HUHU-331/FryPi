@@ -36,7 +36,7 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
 /**********************
  *  STATIC VARIABLES
  **********************/
-static lv_disp_drv_t * s_pending_disp_drv = NULL;
+/* 正在等 DMA 完成回调的那次 flush；回调里用它来 ack LVGL */
 static lv_disp_drv_t * g_current_disp_drv = NULL;
 
 /**********************
@@ -146,7 +146,6 @@ void lcd_flush_ready_callback(void)
     {
         lv_disp_flush_ready(g_current_disp_drv);
         g_current_disp_drv = NULL;
-        s_pending_disp_drv = NULL;
     }
 }
 
@@ -162,15 +161,20 @@ static void disp_init(void)
  *'lv_disp_flush_ready()' has to be called when finished.*/
 static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p)
 {
-    if (g_current_disp_drv != NULL)
-    {
-        LCD_Color_Fill(area->x1, area->y1, area->x2, area->y2, (u16 *)color_p);
-        return;
-    }
-
+    /* LVGL 本身是串行的：上一块区域的 lv_disp_flush_ready() 返回之后才会调用下一次
+       flush，所以这里不需要再做"重入保护"。原来的写法在 g_current_disp_drv != NULL
+       时又发起一次 LCD_Color_Fill 然后直接 return，既丢了这一帧（HAL_BUSY），
+       又永远不调 lv_disp_flush_ready()，导致后续渲染全部堵死。
+       现在只关心一件事：这一帧有没有真正发出去，没发出去就立即 ack。 */
     g_current_disp_drv = disp_drv;
-    s_pending_disp_drv = disp_drv;
-    LCD_Color_Fill(area->x1, area->y1, area->x2, area->y2, (u16 *)color_p);
+
+    if (LCD_Color_Fill(area->x1, area->y1, area->x2, area->y2, (u16 *)color_p) != HAL_OK)
+    {
+        /* 驱动层已经等过 SPI 空闲，走到这里说明真的发不出去（超时/硬件异常）：
+           清掉待 ack 指针并立即 ack，宁可丢一帧也不能让渲染停摆 */
+        g_current_disp_drv = NULL;
+        lv_disp_flush_ready(disp_drv);
+    }
 }
 
 

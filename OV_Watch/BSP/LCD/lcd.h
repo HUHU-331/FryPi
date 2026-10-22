@@ -5,7 +5,7 @@
 typedef void (*LCD_CallbackFunc_t)(void);
 
 void LCD_Fill(u16 xsta,u16 ysta,u16 xend,u16 yend,u16 color);//指定区域填充颜色
-void LCD_Color_Fill(u16 xsta,u16 ysta,u16 xend,u16 yend,u16 *color);
+HAL_StatusTypeDef LCD_Color_Fill(u16 xsta,u16 ysta,u16 xend,u16 yend,u16 *color);
 void LCD_Set_Flush_Complete_Callback(LCD_CallbackFunc_t cb);
 void LCD_DrawPoint(u16 x,u16 y,u16 color);//在指定位置画一个点
 void LCD_DrawLine(u16 x1,u16 y1,u16 x2,u16 y2,u16 color);//在指定位置画一条线

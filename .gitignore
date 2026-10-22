@@ -4,3 +4,7 @@ output/
 
 # 原版工程对照副本（本地留作 diff 生成来源）
 OV_Watch(原版)/
+
+# Keil 本机生成物（界面布局 / 事件记录桩）
+OV_Watch/MDK-ARM/*.uvguix.*
+OV_Watch/MDK-ARM/EventRecorderStub.scvd
