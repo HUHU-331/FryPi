@@ -9,6 +9,11 @@
 //gui
 #include "lvgl.h"
 #include "ui_TimerPage.h"
+#include "ui_HomePage.h"
+#include "ui_MenuPage.h"
+#include "PageManager.h"
+#include "em70x8.h"
+#include "LSM303.h"
 //tasks
 #include "user_HardwareInitTask.h"
 #include "user_RunModeTasks.h"
@@ -146,6 +151,8 @@ osMessageQueueId_t Stop_MessageQueue;
 osMessageQueueId_t IdleBreak_MessageQueue;
 osMessageQueueId_t HomeUpdata_MessageQueue;
 osMessageQueueId_t DataSave_MessageQueue;
+/* Page switch request queue: depth 2 so a fast double press is not dropped */
+osMessageQueueId_t PageReq_MessageQueue;
 
 /* Private function prototypes -----------------------------------------------*/
 void LvHandlerTask(void *argument);
@@ -174,6 +181,7 @@ void User_Tasks_Init(void)
 	IdleBreak_MessageQueue = osMessageQueueNew(1, 1, NULL);
 	HomeUpdata_MessageQueue = osMessageQueueNew(1, 1, NULL);
 	DataSave_MessageQueue = osMessageQueueNew(2, 1, NULL);
+	PageReq_MessageQueue = osMessageQueueNew(2, 1, NULL);
 
 	/* add threads, ... */
   HardwareInitTaskHandle  = osThreadNew(HardwareInitTask, NULL, &HardwareInitTask_attributes);
@@ -243,10 +251,19 @@ void TaskTickHook(void)
   * @brief  LVGL Handler task, to run the lvgl
   * @param  argument: Not used
   * @retval None
+  * @note   This task owns the LVGL object tree. LVGL itself has no internal
+  *         locking, so every lv_* call in the whole project must happen in
+  *         this single context. Page switching used to be done by ScrRenewTask
+  *         while this task was rendering the same tree - a data race that could
+  *         free a node in the middle of the render walk (use-after-free,
+  *         sporadic HardFault). ScrRenewTask now only forwards a page request
+  *         through PageReq_MessageQueue, and the actual Page_Back() call is
+  *         executed here, serialized with rendering by design.
   */
 void LvHandlerTask(void *argument)
 {
 	uint8_t IdleBreakstr=0;
+	uint8_t PageReq=0;
   while(1)
   {
 		if(lv_disp_get_inactive_time(NULL)<1000)
@@ -254,6 +271,28 @@ void LvHandlerTask(void *argument)
 			//Idle time break, set to 0
 			osMessageQueuePut(IdleBreak_MessageQueue, &IdleBreakstr, 0, 0);
 		}
+
+		/* Page switch request, handled in this context only.
+		   1 = short press (back), 2 = long press (back to bottom / home) */
+		if(osMessageQueueGet(PageReq_MessageQueue, &PageReq, NULL, 0) == osOK)
+		{
+			if(PageReq == 1)
+			{
+				Page_Back();
+				if(Page_Get_NowPage()->page_obj == &ui_MenuPage)
+				{
+					EM7028_hrs_DisEnable();
+					LSM303DLH_Sleep();
+				}
+			}
+			else if(PageReq == 2)
+			{
+				Page_Back_Bottom();
+				EM7028_hrs_DisEnable();
+				LSM303DLH_Sleep();
+			}
+		}
+
 		lv_task_handler();
     osDelay(1);
 	}

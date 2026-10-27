@@ -16,6 +16,9 @@ extern osMessageQueueId_t Stop_MessageQueue;
 extern osMessageQueueId_t IdleBreak_MessageQueue;
 extern osMessageQueueId_t HomeUpdata_MessageQueue;
 extern osMessageQueueId_t DataSave_MessageQueue;
+/* Page switch request: produced by ScrRenewTask, consumed by LvHandlerTask.
+   Only LvHandlerTask is allowed to call lv_* APIs. */
+extern osMessageQueueId_t PageReq_MessageQueue;
 
 void User_Tasks_Init(void);
 void TaskTickHook(void);

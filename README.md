@@ -1,11 +1,12 @@
 # FryPi · OV_Watch 二次改造
 
-基于开源工程 [FryPi](https://github.com/No-Chicken/OV-Watch)（GPL-3.0）的 OV_Watch 智能手表子工程，做两处互相独立的改造：
+基于开源工程 [FryPi](https://github.com/No-Chicken/OV-Watch)（GPL-3.0）的 OV_Watch 智能手表子工程，做三处互相独立的改造：
 
 | 改动 | diff | 规模 |
 | --- | --- | --- |
 | 一、按键驱动改造（轮询 → EXTI + 任务通知） | [`按键驱动改造.diff`](按键驱动改造.diff) | +87 / −18 |
 | 二、LCD 刷新链路修复（DMA 忙检测缺失） | [`LCD刷新链路修复.diff`](LCD刷新链路修复.diff) | +58 / −14 |
+| 三、页面切换竞态修复（LVGL 单上下文收敛） | [`页面切换竞态修复.diff`](页面切换竞态修复.diff) | +55 / −30 |
 
 ---
 
@@ -55,15 +56,47 @@
 
 ---
 
+## 三、页面切换竞态修复
+
+**性质**：代码审计发现的**并发隐患**（非已复现故障）。LVGL v8 内部没有任何锁，官方要求所有 `lv_*` 调用发生在同一上下文；违反时症状是时序相关的偶发 HardFault，难复现、难定位，因此按"隐患"处理而不是等它炸。
+
+**根因**（读码定位）：
+
+1. `User/Tasks/Src/user_ScrRenewTask.c` 消费 `Key_MessageQueue` 后，**在自己的任务上下文里**直接调用 `Page_Back()` / `Page_Back_Bottom()`，即由 ScrRenewTask 创建/删除 LVGL 对象；
+2. 与此同时 `LvHandlerTask`（`user_TasksInit.c`）在跑 `lv_task_handler()`，**沿同一棵对象树遍历渲染**；
+3. 两个任务同时操作一棵无锁的对象树：渲染正在读某个子节点时，该节点被另一任务 `lv_obj_del()` 释放 → 渲染侧解引用已释放内存（use-after-free），时序相关、偶发 HardFault。全工程无任何互斥量，队列只传了按键事件，**没有解决"谁可以碰对象树"这个问题**。
+
+**修复（单上下文收敛，零锁零开销）**：
+
+- 新增 `PageReq_MessageQueue`（深度 2，容纳快速双击）：ScrRenewTask 降级为**纯转发**——把按键事件翻译成"切页请求"投进队列，文件内不再有任何 `lv_*` 调用；
+- 切页动作与随附的传感器休眠（`EM7028_hrs_DisEnable()` / `LSM303DLH_Sleep()`）迁移到 `LvHandlerTask` 循环内、`lv_task_handler()` 之前执行；
+- 结果：全工程 `lv_*` 调用收敛到**单一任务上下文**，"读树"与"剪树"由同一个任务按顺序执行，结构上不可能并发 → 竞态根除，且不需要任何锁。
+
+**为什么不是"加个互斥量"**：加锁只是让冲突变慢，仍需在每个 `lv_*` 调用点覆盖、易漏、并引入持锁时长与优先级反转风险；单一写者把问题从"调度正确性"降级为"结构正确性"。同理，队列在这里的作用只是**传事件**，不是并发保护——保护来自"只剩一个写者"。
+
+涉及文件：`OV_Watch/User/Tasks/Src/user_TasksInit.c`、`OV_Watch/User/Tasks/Inc/user_TasksInit.h`、`OV_Watch/User/Tasks/Src/user_ScrRenewTask.c`
+
+**验证**：
+
+1. 编译层：GNU Arm 工具链对两个改动源文件 `-fsyntax-only` 通过（仅剩未使用参数的既有风格告警）；
+2. 行为等价性：短按仍走 `Page_Back()`，长按仍走 `Page_Back_Bottom()` 并在离开菜单页时休眠传感器，与改造前路径一一对应；
+3. **待补**：Keil 全工程编译与真机翻页回归（本改动仅做代码层与语法层验证）。
+
+已知边界：该修复消除的是"两个上下文并发访问对象树"，不改变"单次 `lv_obj_del` 期间渲染被阻塞"的既有行为——切页瞬间可能出现一次可感知的刷新停顿，属原有特性，不在本次范围内。
+
+
+---
+
 ## 如何验证 diff
 
-两份 diff 的路径均与仓库结构一致，clone 本仓库后可直接操作：
+三份 diff 的路径均与仓库结构一致，clone 本仓库后可直接操作：
 
 ```bash
 git apply -R 按键驱动改造.diff      # 还原为改造前
 git apply    按键驱动改造.diff      # 重新应用
 
 git apply -R LCD刷新链路修复.diff   # 同理，可对比改造前后
+git apply -R 页面切换竞态修复.diff  # 页面切换竞态修复
 ```
 
 ## 仿真验证（按键状态机）
